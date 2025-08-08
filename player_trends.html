@@ -1,0 +1,172 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Player Trends - Rich Family Card Cache</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(to bottom, #1e3a8a, #ffffff);
+        }
+        .hot { color: red; font-weight: bold; }
+        .cold { color: blue; font-weight: bold; }
+        canvas { max-width: 600px; margin: 20px auto; }
+    </style>
+</head>
+<body class="font-sans min-h-screen">
+    <div class="max-w-5xl mx-auto p-6">
+        <header class="text-center mb-6">
+            <h1 class="text-4xl font-extrabold text-white">Rich Family Card Cache</h1>
+            <p class="text-white">Player Trends and Recommendations</p>
+        </header>
+
+        <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
+            <h2 id="playerName" class="text-2xl font-bold mb-4"></h2>
+            <table id="playerTable" class="w-full border-collapse mb-6">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border p-2">Card Name</th>
+                        <th class="border p-2">Year</th>
+                        <th class="border p-2">Value</th>
+                        <th class="border p-2">Condition</th>
+                        <th class="border p-2">Popularity</th>
+                        <th class="border p-2">Recommendation</th>
+                        <th class="border p-2">Details</th>
+                    </tr>
+                </thead>
+                <tbody id="playerTableBody"></tbody>
+            </table>
+            <canvas id="popularityChart"></canvas>
+            <p class="mt-4 text-gray-600">Note: Popularity is estimated based on card value, rarity, and player performance. Update values weekly using SportsCardsPro or eBay completed sales. Check @BaseballAmerica on X for player performance updates.</p>
+            <a href="index.html" class="btn bg-blue-600 text-white p-2 rounded mt-4 inline-block">Back to Collection</a>
+        </div>
+    </div>
+
+    <script>
+        // Simulated card database with recommendation details
+        const cardDatabase = {
+            '123456789': { 
+                name: '2025 Topps Heritage Black Refractor #41/76', 
+                player: 'Paul Skenes', 
+                year: 2025, 
+                value: 400, 
+                condition: 'Near Mint', 
+                popularity: 'Hot', 
+                recommendation: 'Hold or Grade (if mint)', 
+                details: 'High demand due to low serial number (/76) and Skenes’ rising stardom. Hold for potential value increase if he excels in 2025. Grade with PSA if condition is pristine (PSA 10 could reach $1,500).'
+            },
+            '987654321': { 
+                name: '2025 Topps Heritage Base (NL All-Star)', 
+                player: 'Paul Skenes', 
+                year: 2025, 
+                value: 5, 
+                condition: 'Excellent', 
+                popularity: 'Cold', 
+                recommendation: 'Hold', 
+                details: 'Low value due to high print run. Keep for sentimental value in the family collection. Not worth grading due to low return on investment.'
+            }
+        };
+
+        // Load collection from localStorage
+        const collection = JSON.parse(localStorage.getItem('cardCollection')) || [];
+
+        // Get player from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const player = urlParams.get('player');
+        document.getElementById('playerName').textContent = `${player}'s Card Trends`;
+
+        // Filter cards for the player
+        const playerCards = collection.filter(card => card.player === player);
+
+        // Update player table
+        const tbody = document.getElementById('playerTableBody');
+        playerCards.forEach(card => {
+            const details = cardDatabase[Object.keys(cardDatabase).find(key => cardDatabase[key].name === card.name)]?.details || 'No additional details available.';
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td class="border p-2">${card.name}</td>
+                <td class="border p-2">${card.year}</td>
+                <td class="border p-2">$${card.value.toFixed(2)}</td>
+                <td class="border p-2">${card.condition}</td>
+                <td class="border p-2 ${card.popularity.toLowerCase()}">${card.popularity}</td>
+                <td class="border p-2">${card.recommendation}</td>
+                <td class="border p-2">${details}</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        // Update popularity chart
+        const ctx = document.getElementById('popularityChart').getContext('2d');
+        const labels = playerCards.map(card => card.name);
+        const popularityValues = playerCards.map(card => card.popularity === 'Hot' ? 80 : 20);
+
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Popularity (Estimated Demand)',
+                    data: popularityValues,
+                    backgroundColor: playerCards.map(card => card.popularity === 'Hot' ? 'red' : 'blue'),
+                    borderColor: playerCards.map(card => card.popularity === 'Hot' ? 'darkred' : 'darkblue'),
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: { display: true, text: 'Demand (0-100)' }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    title: { display: true, text: `${player}'s Card Popularity` }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
