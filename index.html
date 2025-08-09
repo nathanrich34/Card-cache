@@ -1,3 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rich Family Card Cache</title>
+    <!-- External Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.0/tesseract.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(to bottom, #1e3a8a, #ffffff);
+        }
+        .card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        .btn {
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            filter: brightness(110%);
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .hot { color: red; font-weight: bold; }
+        .cold { color: blue; font-weight: bold; }
+        .player-link { color: #1e3a8a; text-decoration: underline; cursor: pointer; }
+        .player-link:hover { color: #2563eb; }
+    </style>
+</head>
+<body class="font-sans min-h-screen">
+    <div class="max-w-5xl mx-auto p-6">
+        <header class="text-center mb-6">
+            <h1 class="text-4xl font-extrabold text-white">Rich Family Card Cache</h1>
+            <p class="text-white">Your Family’s Baseball Card Collection</p>
+        </header>
+
+        <!-- Scan Section -->
+        <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
+            <h2 class="text-2xl font-bold mb-4">Scan or Add a Card</h2>
+            <div class="flex flex-col sm:flex-row gap-4 mb-4">
+                <button id="scanButton" class="btn bg-blue-600 text-white p-2 rounded">Scan with Camera</button>
+                <button id="manualEntryButton" class="btn bg-green-600 text-white p-2 rounded">Add Manually</button>
+            </div>
+            
+            <!-- This container is important for positioning the camera view and capture button -->
+            <div id="videoContainer" class="relative w-full max-w-md mx-auto">
+                <video id="video" class="hidden w-full"></video>
+            </div>
+            <canvas id="canvas" class="hidden"></canvas>
+            <p id="scanStatus" class="text-gray-600 mt-2 text-center"></p>
+
+            <!-- Manual Entry Form (Hidden by Default) -->
+            <div id="manualEntryForm" class="hidden mt-4">
+                <h3 class="text-lg font-bold mb-2">Manual Card Entry</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <input id="manualName" type="text" placeholder="Card Name" class="border p-2 rounded">
+                    <input id="manualPlayer" type="text" placeholder="Player" class="border p-2 rounded">
+                    <input id="manualYear" type="number" placeholder="Year" class="border p-2 rounded">
+                    <input id="manualValue" type="number" placeholder="Value ($)" class="border p-2 rounded">
+                    <select id="manualCondition" class="border p-2 rounded">
+                        <option value="Unknown">Select Condition</option>
+                        <option value="Mint">Mint</option>
+                        <option value="Near Mint">Near Mint</option>
+                        <option value="Excellent">Excellent</option>
+                        <option value="Good">Good</option>
+                    </select>
+                    <select id="manualPopularity" class="border p-2 rounded">
+                        <option value="Unknown">Select Popularity</option>
+                        <option value="Hot">Hot</option>
+                        <option value="Cold">Cold</option>
+                    </select>
+                    <input id="manualRecommendation" type="text" placeholder="Recommendation" class="border p-2 rounded">
+                </div>
+                <button id="submitManual" class="btn bg-blue-600 text-white p-2 rounded mt-4">Submit</button>
+            </div>
+        </div>
+
+        <!-- Filter Section -->
+        <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
+            <h2 class="text-2xl font-bold mb-4">Filter Collection</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <input id="filterPlayer" type="text" placeholder="Filter by Player" class="border p-2 rounded">
+                <input id="filterYear" type="number" placeholder="Filter by Year" class="border p-2 rounded">
+                <select id="filterPopularity" class="border p-2 rounded">
+                    <option value="">All Popularity</option>
+                    <option value="Hot">Hot</option>
+                    <option value="Cold">Cold</option>
+                </select>
+                <input id="filterValueMin" type="number" placeholder="Min Value ($)" class="border p-2 rounded">
+                <input id="filterValueMax" type="number" placeholder="Max Value ($)" class="border p-2 rounded">
+                <select id="filterCondition" class="border p-2 rounded">
+                    <option value="">All Conditions</option>
+                    <option value="Mint">Mint</option>
+                    <option value="Near Mint">Near Mint</option>
+                    <option value="Excellent">Excellent</option>
+                    <option value="Good">Good</option>
+                </select>
+            </div>
+            <button id="applyFilters" class="btn bg-blue-600 text-white p-2 rounded mt-4">Apply Filters</button>
+            <button id="clearFilters" class="btn bg-gray-600 text-white p-2 rounded mt-4">Clear Filters</button>
+        </div>
+
+        <!-- Collection Section -->
+        <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
+            <h2 class="text-2xl font-bold mb-4">Card Collection</h2>
+            <button id="exportCSV" class="btn bg-green-600 text-white p-2 rounded mb-4">Export to CSV</button>
+            <table id="cardTable" class="w-full border-collapse">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border p-2">Card Name</th>
+                        <th class="border p-2">Player</th>
+                        <th class="border p-2">Year</th>
+                        <th class="border p-2">Value</th>
+                        <th class="border p-2">Condition</th>
+                        <th class="border p-2">Popularity</th>
+                        <th class="border p-2">Recommendation</th>
+                        <th class="border p-2">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="cardTableBody"></tbody>
+            </table>
+            <p id="totalValue" class="mt-4 font-bold"></p>
+            <p id="duplicateWarning" class="mt-2 text-red-600"></p>
+        </div>
+    </div>
+
 <script>
     // --- STATE MANAGEMENT ---
     // Load collection from localStorage. This is where your saved cards live.
@@ -11,7 +147,6 @@
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const scanStatus = document.getElementById('scanStatus');
-    const videoContainer = document.getElementById('videoContainer'); // You'll need to add this div in your HTML
 
     // --- CORE FUNCTIONS ---
 
@@ -24,20 +159,12 @@
 
     /**
      * Initializes the camera to capture a photo for OCR.
-     * This replaces the barcode-focused implementation.
      */
     async function initializeCamera() {
         scanStatus.textContent = 'Starting camera...';
         video.classList.remove('hidden');
 
-        // Create a container for the video and button to manage them easily
-        if (!document.getElementById('videoContainer')) {
-            const container = document.createElement('div');
-            container.id = 'videoContainer';
-            container.className = 'relative w-full max-w-md mx-auto';
-            video.parentNode.insertBefore(container, video);
-            container.appendChild(video);
-        }
+        const videoContainer = document.getElementById('videoContainer');
 
         // Create a 'Take Photo' button dynamically over the video feed
         let captureButton = document.getElementById('captureButton');
@@ -46,7 +173,7 @@
             captureButton.id = 'captureButton';
             captureButton.textContent = 'Take Photo';
             captureButton.className = 'btn bg-red-600 text-white p-3 rounded-full absolute bottom-4 left-1/2 -translate-x-1/2 shadow-lg';
-            video.parentElement.appendChild(captureButton);
+            videoContainer.appendChild(captureButton);
 
             captureButton.addEventListener('click', () => {
                 captureImageAndProcess();
@@ -58,7 +185,7 @@
             // Request the rear camera ('environment') on mobile devices
             const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
             video.srcObject = stream;
-            video.play();
+            await video.play();
             scanStatus.textContent = 'Camera ready. Position the card and take a photo.';
         } catch (err) {
             console.error("Camera Error:", err);
@@ -94,7 +221,6 @@
     
     /**
      * Uses extracted text to intelligently pre-fill the manual entry form.
-     * This is more flexible than searching for specific names.
      */
     function prefillManualForm(text) {
         // Simple regex to find a four-digit year (e.g., 1998, 2023)
@@ -198,15 +324,14 @@
         let totalValue = 0;
 
         filteredCollection.forEach(card => {
-            totalValue += card.value;
+            totalValue += parseFloat(card.value) || 0;
             const row = document.createElement('tr');
             row.className = 'card fade-in';
-            // Note the change in the deleteCard function call
             row.innerHTML = `
                 <td class="border p-2">${card.name}</td>
                 <td class="border p-2"><a href="player_trends.html?player=${encodeURIComponent(card.player)}" class="player-link">${card.player}</a></td>
                 <td class="border p-2">${card.year}</td>
-                <td class="border p-2">$${card.value.toFixed(2)}</td>
+                <td class="border p-2">$${(parseFloat(card.value) || 0).toFixed(2)}</td>
                 <td class="border p-2">${card.condition}</td>
                 <td class="border p-2 ${card.popularity.toLowerCase()}">${card.popularity}</td>
                 <td class="border p-2">${card.recommendation}</td>
@@ -227,7 +352,6 @@
         manualEntryButton.addEventListener('click', toggleManualEntryForm);
         document.getElementById('submitManual').addEventListener('click', submitManualCard);
         
-        // Add listeners for filter buttons
         document.getElementById('applyFilters').addEventListener('click', () => {
             const player = document.getElementById('filterPlayer').value.toLowerCase();
             const year = parseInt(document.getElementById('filterYear').value) || null;
@@ -241,8 +365,8 @@
                     (!player || card.player.toLowerCase().includes(player)) &&
                     (!year || card.year === year) &&
                     (!popularity || card.popularity === popularity) &&
-                    (!valueMin || card.value >= valueMin) &&
-                    (!valueMax || card.value <= valueMax) &&
+                    (!valueMin || (parseFloat(card.value) || 0) >= valueMin) &&
+                    (!valueMax || (parseFloat(card.value) || 0) <= valueMax) &&
                     (!condition || card.condition === condition)
                 );
             });
@@ -259,14 +383,13 @@
             updateTable();
         });
 
-        // Add listener for CSV export
         document.getElementById('exportCSV').addEventListener('click', () => {
             const headers = ['Card Name', 'Player', 'Year', 'Value', 'Condition', 'Popularity', 'Recommendation'];
             const rows = collection.map(card => [
-                `"${card.name.replace(/"/g, '""')}"`, // Handle quotes in names
+                `"${card.name.replace(/"/g, '""')}"`,
                 `"${card.player}"`,
                 card.year,
-                card.value.toFixed(2),
+                (parseFloat(card.value) || 0).toFixed(2),
                 `"${card.condition}"`,
                 `"${card.popularity}"`,
                 `"${card.recommendation}"`
@@ -285,8 +408,6 @@
         // Initial table load
         updateTable(); 
     });
-
-    // Note: The sortTable function from your original code can be added here if you wish.
 </script>
 </body>
 </html>
