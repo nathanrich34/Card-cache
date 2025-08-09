@@ -159,13 +159,54 @@
 
     <script>
 document.addEventListener('DOMContentLoaded', () => {
+    // --- OCR CORRECTIONS ---
+    const dictionary = ['Topps', 'Bowman', 'Panini', 'Donruss', 'Fleer', 'Upper Deck', 'Stadium Club', 'Paul Skenes', 'Mike Trout'];
+    let corrections = JSON.parse(localStorage.getItem('ocrCorrections')) || {};
+
+    function correctOcrText(ocrText) {
+        return ocrText.split(' ').map(word => {
+            const lowerWord = word.toLowerCase();
+            const correction = corrections[word] || dictionary.find(term => term.toLowerCase().startsWith(lowerWord) || term.toLowerCase().includes(lowerWord));
+            return correction || word;
+        }).join(' ');
+    }
+
+    function logCorrection(ocrOutput, userInput) {
+        if (ocrOutput !== userInput && userInput.trim()) {
+            corrections[ocrOutput] = userInput;
+            localStorage.setItem('ocrCorrections', JSON.stringify(corrections));
+        }
+    }
+
+    function preprocessImage(canvas) {
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+
+        // Convert to grayscale
+        for (let i = 0; i < data.length; i += 4) {
+            const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            data[i] = data[i + 1] = data[i + 2] = avg;
+        }
+
+        // Apply binarization
+        const threshold = 128;
+        for (let i = 0; i < data.length; i += 4) {
+            const binary = data[i] > threshold ? 255 : 0;
+            data[i] = data[i + 1] = data[i + 2] = binary;
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+        return canvas.toDataURL('image/jpeg', 0.7);
+    }
+
     // --- STATE MANAGEMENT ---
     let collection = JSON.parse(localStorage.getItem('cardCollection')) || [];
     let frontImage, backImage, frontText, backText;
     let currentStep = 'capture';
     let currentPage = 1;
     const itemsPerPage = 10;
-    let ocrContrast = 50; // Adjustable contrast for OCR retry
+    let ocrContrast = 50;
 
     // --- DOM ELEMENTS ---
     const modal = document.getElementById('addCardModal');
@@ -207,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const resetModal = () => {
         frontImage = null; backImage = null; frontText = ''; backText = '';
-        ocrContrast = 50; // Reset contrast
+        ocrContrast = 50;
         document.getElementById('modalTitle').textContent = "Add a New Card";
         document.getElementById('captureInstructions').textContent = "First, let's capture the FRONT of the card.";
         ocrStatus.textContent = '';
@@ -243,21 +284,6 @@ document.addEventListener('DOMContentLoaded', () => {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         return preprocessImage(canvas);
     };
-    const preprocessImage = (canvas) => {
-        const context = canvas.getContext('2d');
-        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-
-        // Convert to grayscale and adjust contrast
-        for (let i = 0; i < data.length; i += 4) {
-            const r = data[i], g = data[i + 1], b = data[i + 2];
-            const gray = 0.2989 * r + 0.5870 * g + 0.1140 * b;
-            const contrasted = gray < 128 ? Math.max(0, gray - ocrContrast) : Math.min(255, gray + ocrContrast);
-            data[i] = data[i + 1] = data[i + 2] = contrasted;
-        }
-        context.putImageData(imageData, 0, 0);
-        return canvas.toDataURL('image/jpeg', 0.7); // Compress to save space
-    };
 
     // --- OCR ---
     const analyzeText = async () => {
@@ -265,11 +291,11 @@ document.addEventListener('DOMContentLoaded', () => {
             ocrStatus.textContent = 'Analyzing images...';
             loadingSpinner.classList.remove('hidden');
             const frontTextPromise = Tesseract.recognize(frontImage, 'eng', {
-                tessedit_pageseg_mode: 6 // Treat as single block of text
-            }).then(res => frontText = res.data.text);
+                tessedit_pageseg_mode: 4 // Single line for better number detection
+            }).then(res => frontText = correctOcrText(res.data.text));
             const backTextPromise = Tesseract.recognize(backImage, 'eng', {
-                tessedit_pageseg_mode: 6
-            }).then(res => backText = res.data.text);
+                tessedit_pageseg_mode: 4
+            }).then(res => backText = correctOcrText(res.data.text));
 
             await Promise.all([frontTextPromise, backTextPromise]);
 
@@ -290,28 +316,47 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Find Year
         const yearMatch = fullText.match(/\b(19|20)\d{2}\b/);
-        if (yearMatch) document.getElementById('manualYear').value = yearMatch[0];
+        if (yearMatch) {
+            document.getElementById('manualYear').value = yearMatch[0];
+            logCorrection(yearMatch.input, yearMatch[0]);
+        }
 
         // Find Brand
         const brands = ['topps', 'bowman', 'panini', 'donruss', 'fleer', 'upper deck', 'stadium club'];
         const brandMatch = brands.find(brand => fullText.includes(brand));
-        if (brandMatch) document.getElementById('manualBrand').value = brandMatch.charAt(0).toUpperCase() + brandMatch.slice(1);
+        if (brandMatch) {
+            const formattedBrand = brandMatch.charAt(0).toUpperCase() + brandMatch.slice(1);
+            document.getElementById('manualBrand').value = formattedBrand;
+            logCorrection(brandMatch, formattedBrand);
+        }
 
         // Find Serial Number
         const snMatch = fullText.match(/(\d{1,4}\/\d{1,4})/);
-        if (snMatch) document.getElementById('manualVariation').value = `SN ${snMatch[0]}`;
+        if (snMatch) {
+            document.getElementById('manualVariation').value = `SN ${snMatch[0]}`;
+            logCorrection(snMatch[0], `SN ${snMatch[0]}`);
+        }
 
         // Find Card Number
         const cardNumMatch = fullText.match(/\b#?(\d{1,4})\b/);
-        if (cardNumMatch) document.getElementById('manualCardNumber').value = cardNumMatch[1];
+        if (cardNumMatch) {
+            document.getElementById('manualCardNumber').value = cardNumMatch[1];
+            logCorrection(cardNumMatch[0], cardNumMatch[1]);
+        }
 
         // Find Player Name
         const nameMatch = fText.match(/([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s([A-Z][a-z]+)/) || 
                          bText.match(/([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s([A-Z][a-z]+)/);
-        if (nameMatch) document.getElementById('manualPlayer').value = nameMatch[0];
+        if (nameMatch) {
+            document.getElementById('manualPlayer').value = nameMatch[0];
+            logCorrection(nameMatch.input, nameMatch[0]);
+        }
 
         // Find Rookie Card
-        if (fullText.includes('rookie')) document.getElementById('manualNotes').value = 'Rookie Card';
+        if (fullText.includes('rookie')) {
+            document.getElementById('manualNotes').value = 'Rookie Card';
+            logCorrection('rookie', 'Rookie Card');
+        }
     };
 
     const generateRecommendation = (card) => {
@@ -382,9 +427,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     recaptureBtn.addEventListener('click', () => { resetModal(); startCamera(); });
     retryOcrBtn.addEventListener('click', () => {
-        ocrContrast += 20; // Increase contrast for retry
-        frontImage = preprocessImage(document.createElement('canvas').getContext('2d').drawImage(document.getElementById('frontImgPreview'), 0, 0));
-        backImage = preprocessImage(document.createElement('canvas').getContext('2d').drawImage(document.getElementById('backImgPreview'), 0, 0));
+        ocrContrast += 20;
+        const frontCanvas = document.createElement('canvas');
+        const frontImg = new Image();
+        frontImg.src = frontImage;
+        frontCanvas.width = frontImg.width;
+        frontCanvas.height = frontImg.height;
+        frontCanvas.getContext('2d').drawImage(frontImg, 0, 0);
+        frontImage = preprocessImage(frontCanvas);
+
+        const backCanvas = document.createElement('canvas');
+        const backImg = new Image();
+        backImg.src = backImage;
+        backCanvas.width = backImg.width;
+        backCanvas.height = backImg.height;
+        backCanvas.getContext('2d').drawImage(backImg, 0, 0);
+        backImage = preprocessImage(backCanvas);
+
         analyzeText();
     });
     confirmImagesBtn.addEventListener('click', analyzeText);
@@ -416,6 +475,10 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Please enter a valid number for Value or leave it empty.');
             return;
         }
+
+        // Log corrections for changed fields
+        if (frontText) logCorrection(frontText, card.player + ' ' + card.brand + ' ' + card.year);
+        if (backText) logCorrection(backText, card.variation + ' ' + card.notes);
 
         collection.push(card);
         localStorage.setItem('cardCollection', JSON.stringify(collection));
