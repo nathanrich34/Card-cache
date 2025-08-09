@@ -1,374 +1,233 @@
-<script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-          return cell !== '' && cell != null;
+<script>
+    // --- STATE MANAGEMENT ---
+    // Load collection from localStorage. This is where your saved cards live.
+    let collection = JSON.parse(localStorage.getItem('cardCollection')) || [];
+
+    // --- DOM ELEMENTS ---
+    // Getting references to all the HTML elements we'll need to interact with.
+    const scanButton = document.getElementById('scanButton');
+    const manualEntryButton = document.getElementById('manualEntryButton');
+    const manualEntryForm = document.getElementById('manualEntryForm');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const scanStatus = document.getElementById('scanStatus');
+    const videoContainer = document.getElementById('videoContainer'); // You'll need to add this div in your HTML
+
+    // --- CORE FUNCTIONS ---
+
+    /**
+     * Toggles the visibility of the manual entry form.
+     */
+    function toggleManualEntryForm() {
+        manualEntryForm.classList.toggle('hidden');
+    }
+
+    /**
+     * Initializes the camera to capture a photo for OCR.
+     * This replaces the barcode-focused implementation.
+     */
+    async function initializeCamera() {
+        scanStatus.textContent = 'Starting camera...';
+        video.classList.remove('hidden');
+
+        // Create a container for the video and button to manage them easily
+        if (!document.getElementById('videoContainer')) {
+            const container = document.createElement('div');
+            container.id = 'videoContainer';
+            container.className = 'relative w-full max-w-md mx-auto';
+            video.parentNode.insertBefore(container, video);
+            container.appendChild(video);
         }
-        function loadFileData(filename) {
-        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-            try {
-                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                var firstSheetName = workbook.SheetNames[0];
-                var worksheet = workbook.Sheets[firstSheetName];
 
-                // Convert sheet to JSON to filter blank rows
-                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                var filteredData = jsonData.filter(row => row.some(filledCell));
+        // Create a 'Take Photo' button dynamically over the video feed
+        let captureButton = document.getElementById('captureButton');
+        if (!captureButton) {
+            captureButton = document.createElement('button');
+            captureButton.id = 'captureButton';
+            captureButton.textContent = 'Take Photo';
+            captureButton.className = 'btn bg-red-600 text-white p-3 rounded-full absolute bottom-4 left-1/2 -translate-x-1/2 shadow-lg';
+            video.parentElement.appendChild(captureButton);
 
-                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                var headerRowIndex = filteredData.findIndex((row, index) =>
-                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                );
-                // Fallback
-                if (headerRowIndex === -1 || headerRowIndex > 25) {
-                  headerRowIndex = 0;
+            captureButton.addEventListener('click', () => {
+                captureImageAndProcess();
+                stopCamera();
+            });
+        }
+        
+        try {
+            // Request the rear camera ('environment') on mobile devices
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+            video.srcObject = stream;
+            video.play();
+            scanStatus.textContent = 'Camera ready. Position the card and take a photo.';
+        } catch (err) {
+            console.error("Camera Error:", err);
+            scanStatus.textContent = 'Could not access camera. Please grant permission and try again.';
+            stopCamera();
+        }
+    }
+
+    /**
+     * Captures a frame from the video, displays it on the canvas,
+     * and runs the OCR process.
+     */
+    async function captureImageAndProcess() {
+        scanStatus.textContent = 'Processing image... this may take a moment.';
+        const context = canvas.getContext('2d');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Run OCR on the captured image
+        const { data: { text } } = await Tesseract.recognize(canvas, 'eng', {
+            logger: m => {
+                console.log(m); // Logs progress to the console
+                if (m.status === 'recognizing text') {
+                    scanStatus.textContent = `Analyzing... ${Math.round(m.progress * 100)}%`;
                 }
-
-                // Convert filtered JSON back to CSV
-                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                return csv;
-            } catch (e) {
-                console.error(e);
-                return "";
             }
+        });
+        
+        scanStatus.textContent = 'Text extracted! Please verify the details below.';
+        prefillManualForm(text);
+    }
+    
+    /**
+     * Uses extracted text to intelligently pre-fill the manual entry form.
+     * This is more flexible than searching for specific names.
+     */
+    function prefillManualForm(text) {
+        // Simple regex to find a four-digit year (e.g., 1998, 2023)
+        const yearMatch = text.match(/\b(19|20)\d{2}\b/);
+        if (yearMatch) {
+            document.getElementById('manualYear').value = yearMatch[0];
         }
-        return gk_fileData[filename] || "";
-        }
-        </script><!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rich Family Card Cache</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.0/tesseract.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/camanjs/0.10/caman.full.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body {
-            background: linear-gradient(to bottom, #1e3a8a, #ffffff);
-        }
-        .card {
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-        }
-        .btn {
-            transition: background-color 0.3s;
-        }
-        .btn:hover {
-            filter: brightness(110%);
-        }
-        .fade-in {
-            animation: fadeIn 0.5s ease-in;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .hot { color: red; font-weight: bold; }
-        .cold { color: blue; font-weight: bold; }
-        .player-link { color: #1e3a8a; text-decoration: underline; cursor: pointer; }
-        .player-link:hover { color: #2563eb; }
-    </style>
-</head>
-<body class="font-sans min-h-screen">
-    <div class="max-w-5xl mx-auto p-6">
-        <header class="text-center mb-6">
-            <h1 class="text-4xl font-extrabold text-white">Rich Family Card Cache</h1>
-            <p class="text-white">Your Family’s Baseball Card Collection</p>
-        </header>
 
-        <!-- Scan Section -->
-        <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
-            <h2 class="text-2xl font-bold mb-4">Scan or Add a Card</h2>
-            <div class="flex flex-col sm:flex-row gap-4 mb-4">
-                <input id="barcodeInput" type="text" placeholder="Enter barcode manually" class="border p-2 rounded w-full sm:w-1/2">
-                <button id="scanButton" class="btn bg-blue-600 text-white p-2 rounded">Scan with Camera</button>
-                <button id="manualEntryButton" class="btn bg-green-600 text-white p-2 rounded">Add Manually</button>
-            </div>
-            <video id="video" class="hidden w-full max-w-md mx-auto"></video>
-            <canvas id="canvas" class="hidden"></canvas>
-            <p id="scanStatus" class="text-gray-600 mt-2"></p>
+        // A very basic attempt to find a player's name (often capitalized)
+        const nameMatch = text.match(/([A-Z][a-z]+)\s([A-Z][a-z]+)/);
+        if (nameMatch) {
+            document.getElementById('manualPlayer').value = nameMatch[0];
+        }
+        
+        // Put the rest of the relevant text into the card name field for review
+        document.getElementById('manualName').value = text.replace(/\n/g, ' ').trim();
 
-            <!-- Manual Entry Form (Hidden by Default) -->
-            <div id="manualEntryForm" class="hidden mt-4">
-                <h3 class="text-lg font-bold mb-2">Manual Card Entry</h3>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <input id="manualName" type="text" placeholder="Card Name" class="border p-2 rounded">
-                    <input id="manualPlayer" type="text" placeholder="Player" class="border p-2 rounded">
-                    <input id="manualYear" type="number" placeholder="Year" class="border p-2 rounded">
-                    <input id="manualValue" type="number" placeholder="Value ($)" class="border p-2 rounded">
-                    <select id="manualCondition" class="border p-2 rounded">
-                        <option value="Unknown">Select Condition</option>
-                        <option value="Mint">Mint</option>
-                        <option value="Near Mint">Near Mint</option>
-                        <option value="Excellent">Excellent</option>
-                        <option value="Good">Good</option>
-                    </select>
-                    <select id="manualPopularity" class="border p-2 rounded">
-                        <option value="Unknown">Select Popularity</option>
-                        <option value="Hot">Hot</option>
-                        <option value="Cold">Cold</option>
-                    </select>
-                    <input id="manualRecommendation" type="text" placeholder="Recommendation" class="border p-2 rounded">
-                </div>
-                <button id="submitManual" class="btn bg-blue-600 text-white p-2 rounded mt-4">Submit</button>
-            </div>
-        </div>
+        // Show the form so the user can verify the pre-filled data
+        manualEntryForm.classList.remove('hidden');
+    }
 
-        <!-- Filter Section -->
-        <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
-            <h2 class="text-2xl font-bold mb-4">Filter Collection</h2>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <input id="filterPlayer" type="text" placeholder="Filter by Player" class="border p-2 rounded">
-                <input id="filterYear" type="number" placeholder="Filter by Year" class="border p-2 rounded">
-                <select id="filterPopularity" class="border p-2 rounded">
-                    <option value="">All Popularity</option>
-                    <option value="Hot">Hot</option>
-                    <option value="Cold">Cold</option>
-                </select>
-                <input id="filterValueMin" type="number" placeholder="Min Value ($)" class="border p-2 rounded">
-                <input id="filterValueMax" type="number" placeholder="Max Value ($)" class="border p-2 rounded">
-                <select id="filterCondition" class="border p-2 rounded">
-                    <option value="">All Conditions</option>
-                    <option value="Mint">Mint</option>
-                    <option value="Near Mint">Near Mint</option>
-                    <option value="Excellent">Excellent</option>
-                    <option value="Good">Good</option>
-                </select>
-            </div>
-            <button id="applyFilters" class="btn bg-blue-600 text-white p-2 rounded mt-4">Apply Filters</button>
-            <button id="clearFilters" class="btn bg-gray-600 text-white p-2 rounded mt-4">Clear Filters</button>
-        </div>
+    /**
+     * Stops the camera stream and hides the video element and capture button.
+     */
+    function stopCamera() {
+        if (video.srcObject) {
+            video.srcObject.getTracks().forEach(track => track.stop());
+        }
+        video.classList.add('hidden');
+        const captureButton = document.getElementById('captureButton');
+        if (captureButton) {
+            captureButton.remove();
+        }
+    }
 
-        <!-- Collection Section -->
-        <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
-            <h2 class="text-2xl font-bold mb-4">Card Collection</h2>
-            <button id="exportCSV" class="btn bg-green-600 text-white p-2 rounded mb-4">Export to CSV</button>
-            <table id="cardTable" class="w-full border-collapse">
-                <thead>
-                    <tr class="bg-gray-200">
-                        <th class="border p-2 cursor-pointer" onclick="sortTable(0)">Card Name</th>
-                        <th class="border p-2 cursor-pointer" onclick="sortTable(1)">Player</th>
-                        <th class="border p-2 cursor-pointer" onclick="sortTable(2)">Year</th>
-                        <th class="border p-2 cursor-pointer" onclick="sortTable(3)">Value</th>
-                        <th class="border p-2 cursor-pointer" onclick="sortTable(4)">Condition</th>
-                        <th class="border p-2 cursor-pointer" onclick="sortTable(5)">Popularity</th>
-                        <th class="border p-2 cursor-pointer" onclick="sortTable(6)">Recommendation</th>
-                        <th class="border p-2">Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="cardTableBody"></tbody>
-            </table>
-            <p id="totalValue" class="mt-4 font-bold"></p>
-            <p id="duplicateWarning" class="mt-2 text-red-600"></p>
-        </div>
-    </div>
-
-    <script>
-        // Simulated card database
-        const cardDatabase = {
-            '123456789': { 
-                name: '2025 Topps Heritage Black Refractor #41/76', 
-                player: 'Paul Skenes', 
-                year: 2025, 
-                value: 400, 
-                condition: 'Near Mint', 
-                popularity: 'Hot', 
-                recommendation: 'Hold or Grade (if mint)' 
-            },
-            '987654321': { 
-                name: '2025 Topps Heritage Base (NL All-Star)', 
-                player: 'Paul Skenes', 
-                year: 2025, 
-                value: 5, 
-                condition: 'Excellent', 
-                popularity: 'Cold', 
-                recommendation: 'Hold' 
-            }
+    /**
+     * Adds a new card to the collection from the manual form.
+     */
+    function submitManualCard() {
+        const card = {
+            id: Date.now(), // Add a unique ID for better management
+            name: document.getElementById('manualName').value,
+            player: document.getElementById('manualPlayer').value,
+            year: parseInt(document.getElementById('manualYear').value) || 0,
+            value: parseFloat(document.getElementById('manualValue').value) || 0,
+            condition: document.getElementById('manualCondition').value || 'Unknown',
+            popularity: document.getElementById('manualPopularity').value || 'Unknown',
+            recommendation: document.getElementById('manualRecommendation').value || 'None'
         };
 
-        let collection = JSON.parse(localStorage.getItem('cardCollection')) || [];
-        let eBayCache = JSON.parse(localStorage.getItem('eBayCache')) || {};
-
-        // Initialize camera scanning
-        document.getElementById('scanButton').addEventListener('click', () => {
-            Quagga.init({
-                inputStream: {
-                    name: 'Live',
-                    type: 'LiveStream',
-                    target: document.getElementById('video'),
-                    constraints: { facingMode: 'environment' }
-                },
-                decoder: { readers: ['ean_reader', 'upc_reader'] }
-            }, (err) => {
-                if (err) {
-                    document.getElementById('scanStatus').textContent = 'Error initializing camera: ' + err;
-                    return;
+        if (card.name && card.player && card.year) {
+            addCardToCollection(card);
+            scanStatus.textContent = 'Card added successfully!';
+            manualEntryForm.classList.add('hidden');
+            // Clear the form after submission
+            manualEntryForm.querySelectorAll('input[type="text"], input[type="number"], select').forEach(input => {
+                if (input.tagName === 'SELECT') {
+                    input.selectedIndex = 0;
+                } else {
+                    input.value = '';
                 }
-                Quagga.start();
-                document.getElementById('video').classList.remove('hidden');
             });
+        } else {
+            scanStatus.textContent = 'Please fill in Name, Player, and Year.';
+        }
+    }
 
-            Quagga.onDetected((data) => {
-                const code = data.codeResult.code;
-                document.getElementById('barcodeInput').value = code;
-                Quagga.stop();
-                document.getElementById('video').classList.add('hidden');
-                processCard(code);
-            });
+    /**
+     * Adds a card object to the collection array and updates storage/UI.
+     */
+    function addCardToCollection(card) {
+        // Check for duplicates before adding
+        const isDuplicate = collection.some(c => c.name === card.name && c.player === card.player);
+        const duplicateWarning = document.getElementById('duplicateWarning');
+        if (isDuplicate) {
+            duplicateWarning.textContent = `Warning: This card may already be in your collection.`;
+        } else {
+             duplicateWarning.textContent = '';
+        }
+        
+        collection.push(card);
+        localStorage.setItem('cardCollection', JSON.stringify(collection));
+        updateTable();
+    }
+
+    /**
+     * Deletes a card from the collection using its unique ID.
+     */
+    function deleteCard(cardId) {
+        collection = collection.filter(card => card.id !== cardId);
+        localStorage.setItem('cardCollection', JSON.stringify(collection));
+        updateTable();
+    }
+    
+    /**
+     * Updates the HTML table with the current card collection.
+     */
+    function updateTable(filteredCollection = collection) {
+        const tbody = document.getElementById('cardTableBody');
+        tbody.innerHTML = '';
+        let totalValue = 0;
+
+        filteredCollection.forEach(card => {
+            totalValue += card.value;
+            const row = document.createElement('tr');
+            row.className = 'card fade-in';
+            // Note the change in the deleteCard function call
+            row.innerHTML = `
+                <td class="border p-2">${card.name}</td>
+                <td class="border p-2"><a href="player_trends.html?player=${encodeURIComponent(card.player)}" class="player-link">${card.player}</a></td>
+                <td class="border p-2">${card.year}</td>
+                <td class="border p-2">$${card.value.toFixed(2)}</td>
+                <td class="border p-2">${card.condition}</td>
+                <td class="border p-2 ${card.popularity.toLowerCase()}">${card.popularity}</td>
+                <td class="border p-2">${card.recommendation}</td>
+                <td class="border p-2">
+                    <button onclick="deleteCard(${card.id})" class="btn bg-red-600 text-white p-1 rounded">Delete</button>
+                </td>
+            `;
+            tbody.appendChild(row);
         });
 
-        // Manual entry form toggle
-        document.getElementById('manualEntryButton').addEventListener('click', () => {
-            const form = document.getElementById('manualEntryForm');
-            form.classList.toggle('hidden');
-        });
+        document.getElementById('totalValue').textContent = `Total Collection Value: $${totalValue.toFixed(2)}`;
+    }
 
-        // Submit manual entry
-        document.getElementById('submitManual').addEventListener('click', () => {
-            const card = {
-                name: document.getElementById('manualName').value,
-                player: document.getElementById('manualPlayer').value,
-                year: parseInt(document.getElementById('manualYear').value) || 0,
-                value: parseFloat(document.getElementById('manualValue').value) || 0,
-                condition: document.getElementById('manualCondition').value || 'Unknown',
-                popularity: document.getElementById('manualPopularity').value || 'Unknown',
-                recommendation: document.getElementById('manualRecommendation').value || 'None'
-            };
-
-            if (card.name && card.player && card.year) {
-                collection.push(card);
-                localStorage.setItem('cardCollection', JSON.stringify(collection));
-                updateTable();
-                document.getElementById('scanStatus').textContent = 'Card added manually!';
-                document.getElementById('manualEntryForm').classList.add('hidden');
-                document.getElementById('manualEntryForm').querySelectorAll('input, select').forEach(input => input.value = '');
-            } else {
-                document.getElementById('scanStatus').textContent = 'Please fill in all required fields.';
-            }
-        });
-
-        // Process scanned or manual barcode
-        async function processCard(barcode) {
-            const status = document.getElementById('scanStatus');
-            status.textContent = 'Processing card...';
-
-            let card = cardDatabase[barcode];
-            if (!card) {
-                // Try OCR if barcode not found
-                const canvas = document.getElementById('canvas');
-                const video = document.getElementById('video');
-                canvas.width = video.videoWidth || 640;
-                canvas.height = video.videoHeight || 480;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                Caman(canvas, function () {
-                    this.brightness(10).contrast(20).render(async () => {
-                        const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
-                        const playerMatch = text.match(/Paul Skenes/i);
-                        const yearMatch = text.match(/2025/);
-                        const cardMatch = text.match(/Black Refractor|Base/i);
-                        if (playerMatch && yearMatch && cardMatch) {
-                            card = {
-                                name: `2025 Topps Heritage ${cardMatch[0]}`,
-                                player: playerMatch[0],
-                                year: parseInt(yearMatch[0]),
-                                value: cardMatch[0].includes('Black Refractor') ? 400 : 5,
-                                condition: 'Unknown',
-                                popularity: cardMatch[0].includes('Black Refractor') ? 'Hot' : 'Cold',
-                                recommendation: cardMatch[0].includes('Black Refractor') ? 'Hold or Grade (if mint)' : 'Hold'
-                            };
-                        } else {
-                            status.textContent = 'Card not recognized. Use manual entry.';
-                            return;
-                        }
-                        addCardToCollection(card);
-                    });
-                });
-            } else {
-                addCardToCollection(card);
-            }
-        }
-
-        // Add card to collection
-        function addCardToCollection(card) {
-            const status = document.getElementById('scanStatus');
-            if (eBayCache[card.name] && (Date.now() - eBayCache[card.name].timestamp) < 24 * 60 * 60 * 1000) {
-                card.value = eBayCache[card.name].value;
-                status.textContent = 'Card found in cache.';
-            } else {
-                card.value = card.value || 10; // Simulated eBay API
-                eBayCache[card.name] = { value: card.value, timestamp: Date.now() };
-                localStorage.setItem('eBayCache', JSON.stringify(eBayCache));
-            }
-
-            const duplicates = collection.filter(c => c.name === card.name && c.player === card.player);
-            if (duplicates.length > 0) {
-                document.getElementById('duplicateWarning').textContent = `Warning: ${card.name} already in collection.`;
-            }
-
-            collection.push(card);
-            localStorage.setItem('cardCollection', JSON.stringify(collection));
-            updateTable();
-            status.textContent = 'Card added successfully!';
-        }
-
-        // Update table
-        function updateTable(filteredCollection = collection) {
-            const tbody = document.getElementById('cardTableBody');
-            tbody.innerHTML = '';
-            let totalValue = 0;
-
-            filteredCollection.forEach((card, index) => {
-                totalValue += card.value;
-                const row = document.createElement('tr');
-                row.className = 'card fade-in';
-                row.innerHTML = `
-                    <td class="border p-2">${card.name}</td>
-                    <td class="border p-2"><a href="player_trends.html?player=${encodeURIComponent(card.player)}" class="player-link">${card.player}</a></td>
-                    <td class="border p-2">${card.year}</td>
-                    <td class="border p-2">$${card.value.toFixed(2)}</td>
-                    <td class="border p-2">${card.condition}</td>
-                    <td class="border p-2 ${card.popularity.toLowerCase()}">${card.popularity}</td>
-                    <td class="border p-2">${card.recommendation}</td>
-                    <td class="border p-2">
-                        <button onclick="deleteCard(${index})" class="btn bg-red-600 text-white p-1 rounded">Delete</button>
-                    </td>
-                `;
-                tbody.appendChild(row);
-            });
-
-            document.getElementById('totalValue').textContent = `Total Collection Value: $${totalValue.toFixed(2)}`;
-        }
-
-        // Delete card
-        function deleteCard(index) {
-            collection.splice(index, 1);
-            localStorage.setItem('cardCollection', JSON.stringify(collection));
-            updateTable();
-        }
-
-        // Sort table
-        function sortTable(column) {
-            const headers = ['name', 'player', 'year', 'value', 'condition', 'popularity', 'recommendation'];
-            collection.sort((a, b) => {
-                const valA = a[headers[column]];
-                const valB = b[headers[column]];
-                if (typeof valA === 'number') return valA - valB;
-                return valA.localeCompare(valB);
-            });
-            updateTable();
-        }
-
-        // Apply filters
+    // --- EVENT LISTENERS ---
+    // This runs when the page is fully loaded.
+    document.addEventListener('DOMContentLoaded', () => {
+        scanButton.addEventListener('click', initializeCamera);
+        manualEntryButton.addEventListener('click', toggleManualEntryForm);
+        document.getElementById('submitManual').addEventListener('click', submitManualCard);
+        
+        // Add listeners for filter buttons
         document.getElementById('applyFilters').addEventListener('click', () => {
             const player = document.getElementById('filterPlayer').value.toLowerCase();
             const year = parseInt(document.getElementById('filterYear').value) || null;
@@ -387,11 +246,9 @@
                     (!condition || card.condition === condition)
                 );
             });
-
             updateTable(filteredCollection);
         });
 
-        // Clear filters
         document.getElementById('clearFilters').addEventListener('click', () => {
             document.getElementById('filterPlayer').value = '';
             document.getElementById('filterYear').value = '';
@@ -402,11 +259,11 @@
             updateTable();
         });
 
-        // Export to CSV
+        // Add listener for CSV export
         document.getElementById('exportCSV').addEventListener('click', () => {
             const headers = ['Card Name', 'Player', 'Year', 'Value', 'Condition', 'Popularity', 'Recommendation'];
             const rows = collection.map(card => [
-                `"${card.name}"`,
+                `"${card.name.replace(/"/g, '""')}"`, // Handle quotes in names
                 `"${card.player}"`,
                 card.year,
                 card.value.toFixed(2),
@@ -414,7 +271,7 @@
                 `"${card.popularity}"`,
                 `"${card.recommendation}"`
             ]);
-            const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+            const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -426,7 +283,10 @@
         });
 
         // Initial table load
-        updateTable();
-    </script>
+        updateTable(); 
+    });
+
+    // Note: The sortTable function from your original code can be added here if you wish.
+</script>
 </body>
 </html>
