@@ -1,43 +1,4 @@
-<script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-          return cell !== '' && cell != null;
-        }
-        function loadFileData(filename) {
-        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-            try {
-                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                var firstSheetName = workbook.SheetNames[0];
-                var worksheet = workbook.Sheets[firstSheetName];
-
-                // Convert sheet to JSON to filter blank rows
-                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                var filteredData = jsonData.filter(row => row.some(filledCell));
-
-                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                var headerRowIndex = filteredData.findIndex((row, index) =>
-                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                );
-                // Fallback
-                if (headerRowIndex === -1 || headerRowIndex > 25) {
-                  headerRowIndex = 0;
-                }
-
-                // Convert filtered JSON back to CSV
-                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                return csv;
-            } catch (e) {
-                console.error(e);
-                return "";
-            }
-        }
-        return gk_fileData[filename] || "";
-        }
-        </script><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -63,6 +24,7 @@
 
         <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
             <h2 id="playerName" class="text-2xl font-bold mb-4"></h2>
+            <div id="noCardsMessage" class="hidden text-center text-gray-600 mb-4">No cards found for this player.</div>
             <table id="playerTable" class="w-full border-collapse mb-6">
                 <thead>
                     <tr class="bg-gray-200">
@@ -77,7 +39,7 @@
                 </thead>
                 <tbody id="playerTableBody"></tbody>
             </table>
-            <canvas id="popularityChart"></canvas>
+            <canvas id="popularityChart" class="hidden"></canvas>
             <p class="mt-4 text-gray-600">Note: Popularity is estimated based on card value, rarity, and player performance. Update values weekly using SportsCardsPro or eBay completed sales. Check @BaseballAmerica on X for player performance updates.</p>
             <a href="index.html" class="btn bg-blue-600 text-white p-2 rounded mt-4 inline-block">Back to Collection</a>
         </div>
@@ -87,7 +49,7 @@
         // Simulated card database with recommendation details
         const cardDatabase = {
             '123456789': { 
-                name: '2025 Topps Heritage Black Refractor #41/76', 
+                name: 'Topps 2025 SN 41/76', 
                 player: 'Paul Skenes', 
                 year: 2025, 
                 value: 400, 
@@ -97,7 +59,7 @@
                 details: 'High demand due to low serial number (/76) and Skenes’ rising stardom. Hold for potential value increase if he excels in 2025. Grade with PSA if condition is pristine (PSA 10 could reach $1,500).'
             },
             '987654321': { 
-                name: '2025 Topps Heritage Base (NL All-Star)', 
+                name: 'Topps 2025', 
                 player: 'Paul Skenes', 
                 year: 2025, 
                 value: 5, 
@@ -117,56 +79,65 @@
         document.getElementById('playerName').textContent = `${player}'s Card Trends`;
 
         // Filter cards for the player
-        const playerCards = collection.filter(card => card.player === player);
+        const playerCards = collection.filter(card => card.player.toLowerCase() === player.toLowerCase());
 
         // Update player table
         const tbody = document.getElementById('playerTableBody');
-        playerCards.forEach(card => {
-            const details = cardDatabase[Object.keys(cardDatabase).find(key => cardDatabase[key].name === card.name)]?.details || 'No additional details available.';
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td class="border p-2">${card.name}</td>
-                <td class="border p-2">${card.year}</td>
-                <td class="border p-2">$${card.value.toFixed(2)}</td>
-                <td class="border p-2">${card.condition}</td>
-                <td class="border p-2 ${card.popularity.toLowerCase()}">${card.popularity}</td>
-                <td class="border p-2">${card.recommendation}</td>
-                <td class="border p-2">${details}</td>
-            `;
-            tbody.appendChild(row);
-        });
+        const noCardsMessage = document.getElementById('noCardsMessage');
+        const chartCanvas = document.getElementById('popularityChart');
+        if (playerCards.length === 0) {
+            noCardsMessage.classList.remove('hidden');
+            chartCanvas.classList.add('hidden');
+        } else {
+            noCardsMessage.classList.add('hidden');
+            chartCanvas.classList.remove('hidden');
+            playerCards.forEach(card => {
+                const details = cardDatabase[Object.keys(cardDatabase).find(key => cardDatabase[key].name === card.name)]?.details || 'No additional details available.';
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="border p-2">${card.name}</td>
+                    <td class="border p-2">${card.year}</td>
+                    <td class="border p-2">$${parseFloat(card.value || 0).toFixed(2)}</td>
+                    <td class="border p-2">${card.condition}</td>
+                    <td class="border p-2 ${card.popularity.toLowerCase()}">${card.popularity}</td>
+                    <td class="border p-2">${card.recommendation}</td>
+                    <td class="border p-2">${details}</td>
+                `;
+                tbody.appendChild(row);
+            });
 
-        // Update popularity chart
-        const ctx = document.getElementById('popularityChart').getContext('2d');
-        const labels = playerCards.map(card => card.name);
-        const popularityValues = playerCards.map(card => card.popularity === 'Hot' ? 80 : 20);
+            // Update popularity chart
+            const ctx = chartCanvas.getContext('2d');
+            const labels = playerCards.map(card => card.name);
+            const popularityValues = playerCards.map(card => card.popularity === 'Hot' ? 80 : 20);
 
-        new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Popularity (Estimated Demand)',
-                    data: popularityValues,
-                    backgroundColor: playerCards.map(card => card.popularity === 'Hot' ? 'red' : 'blue'),
-                    borderColor: playerCards.map(card => card.popularity === 'Hot' ? 'darkred' : 'darkblue'),
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        max: 100,
-                        title: { display: true, text: 'Demand (0-100)' }
-                    }
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Popularity (Estimated Demand)',
+                        data: popularityValues,
+                        backgroundColor: playerCards.map(card => card.popularity === 'Hot' ? 'red' : 'blue'),
+                        borderColor: playerCards.map(card => card.popularity === 'Hot' ? 'darkred' : 'darkblue'),
+                        borderWidth: 1
+                    }]
                 },
-                plugins: {
-                    legend: { display: false },
-                    title: { display: true, text: `${player}'s Card Popularity` }
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            title: { display: true, text: 'Demand (0-100)' }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        title: { display: true, text: `${player}'s Card Popularity` }
+                    }
                 }
-            }
-        });
+            });
+        }
     </script>
 </body>
 </html>
