@@ -21,7 +21,6 @@
             <h1 class="text-4xl font-extrabold text-white">Rich Family Card Cache</h1>
             <p class="text-white">Player Trends and Recommendations</p>
         </header>
-
         <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
             <h2 id="playerName" class="text-2xl font-bold mb-4"></h2>
             <div id="noCardsMessage" class="hidden text-center text-gray-600 mb-4">No cards found for this player.</div>
@@ -44,7 +43,6 @@
             <a href="index.html" class="btn bg-blue-600 text-white p-2 rounded mt-4 inline-block">Back to Collection</a>
         </div>
     </div>
-
     <script>
         // Simulated card database with recommendation details
         const cardDatabase = {
@@ -69,18 +67,14 @@
                 details: 'Low value due to high print run. Keep for sentimental value in the family collection. Not worth grading due to low return on investment.'
             }
         };
-
         // Load collection from localStorage
         const collection = JSON.parse(localStorage.getItem('cardCollection')) || [];
-
         // Get player from URL
         const urlParams = new URLSearchParams(window.location.search);
         const player = urlParams.get('player');
         document.getElementById('playerName').textContent = `${player}'s Card Trends`;
-
         // Filter cards for the player
         const playerCards = collection.filter(card => card.player.toLowerCase() === player.toLowerCase());
-
         // Update player table
         const tbody = document.getElementById('playerTableBody');
         const noCardsMessage = document.getElementById('noCardsMessage');
@@ -105,12 +99,10 @@
                 `;
                 tbody.appendChild(row);
             });
-
             // Update popularity chart
             const ctx = chartCanvas.getContext('2d');
             const labels = playerCards.map(card => card.name);
             const popularityValues = playerCards.map(card => card.popularity === 'Hot' ? 80 : 20);
-
             new Chart(ctx, {
                 type: 'bar',
                 data: {
