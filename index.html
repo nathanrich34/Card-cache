@@ -113,7 +113,12 @@
                     <input id="manualBrand" type="text" placeholder="Brand (e.g., Topps)" class="border p-2 rounded">
                     <input id="manualCardNumber" type="text" placeholder="Card #" class="border p-2 rounded">
                     <input id="manualVariation" type="text" placeholder="Variation / SN" class="border p-2 rounded">
-                    <input id="manualValue" type="number" placeholder="Estimated Value ($)" class="border p-2 rounded">
+                    <div class="flex items-center gap-2">
+                        <input id="manualValue" type="number" placeholder="Value ($)" class="border p-2 rounded w-full">
+                        <button id="ebayLookupBtn" type="button" class="btn bg-yellow-500 text-white p-2 rounded" title="Check Value on eBay">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                        </button>
+                    </div>
                     <select id="manualCondition" class="border p-2 rounded">
                         <option value="Unknown">Select Condition</option>
                         <option value="Mint">Mint</option>
@@ -135,8 +140,8 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- STATE MANAGEMENT ---
     let collection = JSON.parse(localStorage.getItem('cardCollection')) || [];
-    let frontImage, backImage;
-    let currentStep = 'capture'; // 'capture', 'review', 'form'
+    let frontImage, backImage, frontText, backText;
+    let currentStep = 'capture';
 
     // --- DOM ELEMENTS ---
     const modal = document.getElementById('addCardModal');
@@ -149,6 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelBtn = document.getElementById('cancelBtn');
     const submitCardBtn = document.getElementById('submitCardBtn');
     const ocrStatus = document.getElementById('ocrStatus');
+    const ebayLookupBtn = document.getElementById('ebayLookupBtn');
 
     // --- UI FUNCTIONS ---
     const showModal = () => {
@@ -169,12 +175,10 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(`${step}Step`).classList.remove('hidden');
     };
     const resetModal = () => {
-        frontImage = null;
-        backImage = null;
+        frontImage = null; backImage = null; frontText = ''; backText = '';
         document.getElementById('modalTitle').textContent = "Add a New Card";
         document.getElementById('captureInstructions').textContent = "First, let's capture the FRONT of the card.";
         updateModalStep('capture');
-        // Clear form fields
         document.getElementById('formStep').querySelectorAll('input, select, textarea').forEach(el => {
             if (el.tagName === 'SELECT') el.selectedIndex = 0;
             else el.value = '';
@@ -207,34 +211,34 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const analyzeText = async () => {
         ocrStatus.textContent = 'Analyzing images... this may take a moment.';
-        const frontTextPromise = Tesseract.recognize(frontImage, 'eng');
-        const backTextPromise = Tesseract.recognize(backImage, 'eng');
+        const frontTextPromise = Tesseract.recognize(frontImage, 'eng').then(res => frontText = res.data.text);
+        const backTextPromise = Tesseract.recognize(backImage, 'eng').then(res => backText = res.data.text);
         
-        const [frontResult, backResult] = await Promise.all([frontTextPromise, backTextPromise]);
+        await Promise.all([frontTextPromise, backTextPromise]);
         
-        const fullText = frontResult.data.text + ' ' + backResult.data.text;
         ocrStatus.textContent = 'Analysis complete! Please review the details.';
-        prefillForm(fullText.toLowerCase());
+        prefillForm(frontText.toLowerCase(), backText.toLowerCase());
         updateModalStep('form');
     };
 
     // --- FORM & DATA LOGIC ---
-    const prefillForm = (text) => {
+    const prefillForm = (fText, bText) => {
+        const fullText = fText + ' ' + bText;
         // Find Year
-        const yearMatch = text.match(/\b(19|20)\d{2}\b/);
+        const yearMatch = fullText.match(/\b(19|20)\d{2}\b/);
         if (yearMatch) document.getElementById('manualYear').value = yearMatch[0];
 
         // Find Brand
-        const brands = ['topps', 'bowman', 'panini', 'donruss', 'fleer', 'upper deck'];
-        const brandMatch = brands.find(brand => text.includes(brand));
+        const brands = ['topps', 'bowman', 'panini', 'donruss', 'fleer', 'upper deck', 'stadium club'];
+        const brandMatch = brands.find(brand => fullText.includes(brand));
         if (brandMatch) document.getElementById('manualBrand').value = brandMatch.charAt(0).toUpperCase() + brandMatch.slice(1);
 
         // Find Serial Number
-        const snMatch = text.match(/(\d{1,4}\/\d{1,4})/);
+        const snMatch = fullText.match(/(\d{1,4}\/\d{1,4})/);
         if (snMatch) document.getElementById('manualVariation').value = `SN ${snMatch[0]}`;
         
-        // Find Player Name (simple heuristic)
-        const nameMatch = frontResult.data.text.match(/([A-Z][a-z]+)\s([A-Z][a-z]+)/);
+        // Find Player Name (look on front text first)
+        const nameMatch = fText.match(/([A-Z][a-z]+)\s([A-Z][a-z]+)/);
         if(nameMatch) document.getElementById('manualPlayer').value = nameMatch[0];
     };
     
@@ -243,20 +247,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const isSN = card.variation && card.variation.toLowerCase().includes('sn');
         const isRookie = card.notes && card.notes.toLowerCase().includes('rookie');
 
-        if (value > 50 || (isSN && value > 20)) {
-            return "Sell or Grade";
-        }
-        if (isRookie && value > 10) {
-            return "Hold for Value";
-        }
+        if (value > 50 || (isSN && value > 20)) return "Sell or Grade";
+        if (isRookie && value > 10) return "Hold for Value";
         return "Keep for Collection";
     };
 
+    const openEbaySearch = () => {
+        const year = document.getElementById('manualYear').value;
+        const brand = document.getElementById('manualBrand').value;
+        const player = document.getElementById('manualPlayer').value;
+        const cardNumber = document.getElementById('manualCardNumber').value;
+        const variation = document.getElementById('manualVariation').value;
+
+        if (!player) {
+            alert('Please enter a player name to search on eBay.');
+            return;
+        }
+
+        const query = `${year || ''} ${brand || ''} ${player} ${cardNumber ? `#${cardNumber}`: ''} ${variation || ''}`.trim().replace(/\s+/g, '+');
+        const url = `https://www.ebay.com/sch/i.html?_nkw=${query}&LH_Complete=1&LH_Sold=1`;
+        window.open(url, '_blank');
+    };
+
     // --- EVENT HANDLERS ---
-    addNewCardBtn.addEventListener('click', () => {
-        showModal();
-        startCamera();
-    });
+    addNewCardBtn.addEventListener('click', () => { showModal(); startCamera(); });
     captureBtn.addEventListener('click', () => {
         if (!frontImage) {
             frontImage = captureImage();
@@ -269,12 +283,10 @@ document.addEventListener('DOMContentLoaded', () => {
             updateModalStep('review');
         }
     });
-    recaptureBtn.addEventListener('click', () => {
-        resetModal();
-        startCamera();
-    });
+    recaptureBtn.addEventListener('click', () => { resetModal(); startCamera(); });
     confirmImagesBtn.addEventListener('click', analyzeText);
     cancelBtn.addEventListener('click', hideModal);
+    ebayLookupBtn.addEventListener('click', openEbaySearch);
     submitCardBtn.addEventListener('click', () => {
         const card = {
             id: Date.now(),
@@ -346,12 +358,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Add event listeners for filters
     ['filterPlayer', 'filterYear', 'filterBrand', 'filterRecommendation'].forEach(id => {
         document.getElementById(id).addEventListener('input', updateTable);
     });
 
-    // Initial table load
     updateTable();
 });
 </script>
