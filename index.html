@@ -160,7 +160,7 @@
     <script>
 document.addEventListener('DOMContentLoaded', () => {
     // --- OCR CORRECTIONS ---
-    const dictionary = ['Topps', 'Bowman', 'Panini', 'Donruss', 'Fleer', 'Upper Deck', 'Stadium Club', 'Paul Skenes', 'Mike Trout'];
+    const dictionary = ['Topps', 'Bowman', 'Panini', 'Donruss', 'Fleer', 'Upper Deck', 'Stadium Club', 'Paul Skenes', 'Mike Trout', 'Rookie', 'All-Star', 'Series', 'Chrome', 'Heritage'];
     let corrections = JSON.parse(localStorage.getItem('ocrCorrections')) || {};
 
     function correctOcrText(ocrText) {
@@ -180,24 +180,79 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function preprocessImage(canvas) {
         const ctx = canvas.getContext('2d');
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const width = canvas.width;
+        const height = canvas.height;
+        const imageData = ctx.getImageData(0, 0, width, height);
         const data = imageData.data;
 
-        // Convert to grayscale
+        // Grayscale
         for (let i = 0; i < data.length; i += 4) {
             const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
             data[i] = data[i + 1] = data[i + 2] = avg;
         }
 
-        // Apply binarization
-        const threshold = 128;
-        for (let i = 0; i < data.length; i += 4) {
-            const binary = data[i] > threshold ? 255 : 0;
-            data[i] = data[i + 1] = data[i + 2] = binary;
+        // Simple Gaussian blur for noise reduction (3x3 kernel)
+        const tempData = new Uint8ClampedArray(data);
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const i = (y * width + x) * 4;
+                let sum = 0;
+                for (let ky = -1; ky <= 1; ky++) {
+                    for (let kx = -1; kx <= 1; kx++) {
+                        sum += tempData[((y + ky) * width + (x + kx)) * 4];
+                    }
+                }
+                const avg = sum / 9;
+                data[i] = data[i + 1] = data[i + 2] = avg;
+            }
         }
 
+        // Adaptive thresholding to avoid over-darkening (local mean)
+        const blockSize = 15; // Adjust (odd number, 11-21 for cards)
+        const C = 5; // Constant subtraction for fine-tuning
+        const halfBlock = Math.floor(blockSize / 2);
+        const adaptiveData = new Uint8ClampedArray(data);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const i = (y * width + x) * 4;
+                let sum = 0;
+                let count = 0;
+                for (let ky = -halfBlock; ky <= halfBlock; ky++) {
+                    for (let kx = -halfBlock; kx <= halfBlock; kx++) {
+                        const ny = y + ky;
+                        const nx = x + kx;
+                        if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
+                            sum += tempData[(ny * width + nx) * 4];
+                            count++;
+                        }
+                    }
+                }
+                const localMean = sum / count;
+                const binary = data[i] > (localMean - C) ? 255 : 0;
+                data[i] = data[i + 1] = data[i + 2] = binary;
+            }
+        }
+
+        // Dilation to enhance text edges (grow light areas)
+        const dilatedData = new Uint8ClampedArray(data);
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const i = (y * width + x) * 4;
+                if (data[i] === 255) continue;
+                let max = 0;
+                for (let ky = -1; ky <= 1; ky++) {
+                    for (let kx = -1; kx <= 1; kx++) {
+                        const neighbor = data[((y + ky) * width + (x + kx)) * 4];
+                        if (neighbor > max) max = neighbor;
+                    }
+                }
+                dilatedData[i] = dilatedData[i + 1] = dilatedData[i + 2] = max;
+            }
+        }
+        for (let i = 0; i < data.length; i++) data[i] = dilatedData[i];
+
         ctx.putImageData(imageData, 0, 0);
-        return canvas.toDataURL('image/jpeg', 0.7);
+        return canvas.toDataURL('image/jpeg', 0.8); // Higher quality for accuracy
     }
 
     // --- STATE MANAGEMENT ---
@@ -278,8 +333,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const captureImage = () => {
         const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth * 1.5; // Upscale by 1.5x for better resolution
+        canvas.height = video.videoHeight * 1.5;
         const context = canvas.getContext('2d');
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         return preprocessImage(canvas);
@@ -291,10 +346,10 @@ document.addEventListener('DOMContentLoaded', () => {
             ocrStatus.textContent = 'Analyzing images...';
             loadingSpinner.classList.remove('hidden');
             const frontTextPromise = Tesseract.recognize(frontImage, 'eng', {
-                tessedit_pageseg_mode: 4 // Single line for better number detection
+                tessedit_pageseg_mode: 6 // Uniform text block for card layouts
             }).then(res => frontText = correctOcrText(res.data.text));
             const backTextPromise = Tesseract.recognize(backImage, 'eng', {
-                tessedit_pageseg_mode: 4
+                tessedit_pageseg_mode: 6
             }).then(res => backText = correctOcrText(res.data.text));
 
             await Promise.all([frontTextPromise, backTextPromise]);
@@ -314,11 +369,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const prefillForm = (fText, bText) => {
         const fullText = fText + ' ' + bText;
 
-        // Find Year
-        const yearMatch = fullText.match(/\b(19|20)\d{2}\b/);
+        // Find Year (more flexible for '23 shorthand)
+        const yearMatch = fullText.match(/\b('?\d{2}|\d{4})\b/);
         if (yearMatch) {
-            document.getElementById('manualYear').value = yearMatch[0];
-            logCorrection(yearMatch.input, yearMatch[0]);
+            const year = yearMatch[0].startsWith("'") ? `20${yearMatch[0].slice(1)}` : yearMatch[0];
+            document.getElementById('manualYear').value = year;
+            logCorrection(yearMatch.input, year);
         }
 
         // Find Brand
@@ -338,15 +394,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Find Card Number
-        const cardNumMatch = fullText.match(/\b#?(\d{1,4})\b/);
+        const cardNumMatch = fullText.match(/\b#?(\d{1,4}[a-zA-Z]?)\b/); // Allow letters like #123A
         if (cardNumMatch) {
             document.getElementById('manualCardNumber').value = cardNumMatch[1];
             logCorrection(cardNumMatch[0], cardNumMatch[1]);
         }
 
-        // Find Player Name
-        const nameMatch = fText.match(/([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s([A-Z][a-z]+)/) || 
-                         bText.match(/([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s([A-Z][a-z]+)/);
+        // Find Player Name (handle multi-word, hyphens)
+        const nameMatch = fullText.match(/([A-Z][a-z]+(?:-[A-Z][a-z]+)?(?:\s[A-Z][a-z]+(?:-[A-Z][a-z]+)?)?)/);
         if (nameMatch) {
             document.getElementById('manualPlayer').value = nameMatch[0];
             logCorrection(nameMatch.input, nameMatch[0]);
@@ -431,18 +486,24 @@ document.addEventListener('DOMContentLoaded', () => {
         const frontCanvas = document.createElement('canvas');
         const frontImg = new Image();
         frontImg.src = frontImage;
-        frontCanvas.width = frontImg.width;
-        frontCanvas.height = frontImg.height;
-        frontCanvas.getContext('2d').drawImage(frontImg, 0, 0);
-        frontImage = preprocessImage(frontCanvas);
+        frontImg.onload = () => {
+            frontCanvas.width = frontImg.width * 1.5; // Upscale on retry
+            frontCanvas.height = frontImg.height * 1.5;
+            frontCanvas.getContext('2d').drawImage(frontImg, 0, 0, frontCanvas.width, frontCanvas.height);
+            frontImage = preprocessImage(frontCanvas);
+            document.getElementById('frontImgPreview').src = frontImage;
+        };
 
         const backCanvas = document.createElement('canvas');
         const backImg = new Image();
         backImg.src = backImage;
-        backCanvas.width = backImg.width;
-        backCanvas.height = backImg.height;
-        backCanvas.getContext('2d').drawImage(backImg, 0, 0);
-        backImage = preprocessImage(backCanvas);
+        backImg.onload = () => {
+            backCanvas.width = backImg.width * 1.5;
+            backCanvas.height = backImg.height * 1.5;
+            backCanvas.getContext('2d').drawImage(backImg, 0, 0, backCanvas.width, backCanvas.height);
+            backImage = preprocessImage(backCanvas);
+            document.getElementById('backImgPreview').src = backImage;
+        };
 
         analyzeText();
     });
@@ -476,9 +537,9 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Log corrections for changed fields
-        if (frontText) logCorrection(frontText, card.player + ' ' + card.brand + ' ' + card.year);
-        if (backText) logCorrection(backText, card.variation + ' ' + card.notes);
+        // Log corrections for changed fields (prioritize user edits)
+        logCorrection(frontText || '', card.player + ' ' + card.brand + ' ' + card.year);
+        logCorrection(backText || '', card.variation + ' ' + card.notes + ' ' + card.cardNumber);
 
         collection.push(card);
         localStorage.setItem('cardCollection', JSON.stringify(collection));
